@@ -37,7 +37,8 @@ interest_input = st.text_input(
     placeholder="e.g. frontend+developer+remote"
 )
 
-if json_input and interest_input:
+# Process input only once
+if json_input and interest_input and "matches" not in st.session_state:
     try:
         student_data = json.loads(json_input)
     except json.JSONDecodeError as e:
@@ -62,25 +63,23 @@ if json_input and interest_input:
     # ───── Load & Preprocess Job Data ───── #
     part_files = ["part_1.jsonl", "part_2.jsonl", "part_3.jsonl"]
     jobs = []
-    for fname in part_files:
-        path = os.path.join(BASE_DIR, fname)
-        if not os.path.exists(path):
-            st.error(f"❌ Missing file in repo: {fname}")
-            st.stop()
+    with st.spinner("🚀 Loading and Indexing Jobs..."):
+        for fname in part_files:
+            path = os.path.join(BASE_DIR, fname)
+            if not os.path.exists(path):
+                st.error(f"❌ Missing file in repo: {fname}")
+                st.stop()
+            try:
+                raw_lines = open(path, "r").read().splitlines()
+                records = [json.loads(line) for line in raw_lines if line.strip()]
+            except Exception as e:
+                st.error(f"❌ Error loading {fname}: {e}")
+                st.stop()
+            jobs.extend(records)
 
-        try:
-            raw_lines = open(path, "r").read().splitlines()
-            # skip blank lines
-            records = [json.loads(line) for line in raw_lines if line.strip()]
-        except Exception as e:
-            st.error(f"❌ Error loading {fname}: {e}")
-            st.stop()
-
-        jobs.extend(records)
-
-    job_texts, job_index = preprocess_jobs(jobs)
-    bm25 = build_bm25_model(job_texts)
-    st.success(f"✅ Loaded and indexed {len(jobs)} jobs")
+        job_texts, job_index = preprocess_jobs(jobs)
+        bm25 = build_bm25_model(job_texts)
+    st.success(f"✅ Loaded and indexed jobs")
 
     # ───── Match Students to Jobs ───── #
     matches = match_students_to_jobs(
@@ -89,27 +88,44 @@ if json_input and interest_input:
     pickle_path = os.path.join(BASE_DIR, "student_job_matches.pkl")
     with open(pickle_path, "wb") as f:
         pickle.dump(matches, f)
-    st.success("🎯 Top job matches generated using BM25!")
-    st.write(matches)
 
     # ───── LLM Reasoning on Matches ───── #
     try:
-        final_resp = analyze_matches(pickle_path, student_data)
+        with st.spinner("🧠 LLM is analyzing job matches..."):
+            final_resp = analyze_matches(pickle_path, student_data)
         st.markdown("## 🤖 LLM Career Analysis")
         st.write(final_resp)
     except Exception as e:
         st.error(f"❌ LLM reasoning failed: {e}")
-    # --- Prepare data ---
-    data = {
-        "timestamp": datetime.utcnow().isoformat(),
-        "student_profile": json_input,
-        "bm25_matches": matches,
-        "llm_analysis": final_resp
-    }
-# --- Insert into Supabase ---
-    response = supabase.table("job_matches").insert(data).execute()
+        final_resp = {}
 
-    if response.data:
-        st.success("✅ Data inserted successfully!")
-    else:
-        st.error(f"❌ Insert failed: {response}")
+    # Save results to session_state
+    st.session_state["student_json"] = json_input
+    st.session_state["matches"] = matches
+    st.session_state["final_resp"] = final_resp
+
+# --- Show results and push button if available ---
+if "matches" in st.session_state and "final_resp" in st.session_state:
+    st.markdown("### ✅ Data is ready to be uploaded")
+    # st.write(st.session_state["matches"])  # Optional preview
+    st.write(st.session_state["final_resp"])
+
+    if st.button("📤 Push to Supabase"):
+        with st.spinner("🚀 Uploading data to Supabase..."):
+            try:
+                data = {
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "student_profile": st.session_state["student_json"],
+                    "bm25_matches": st.session_state["matches"],
+                    "llm_analysis": st.session_state["final_resp"]
+                }
+                response = supabase.table("job_matches").insert(data).execute()
+                if response.data:
+                    st.success("✅ Data inserted successfully into Supabase!")
+                    st.session_state.pop("matches", None)
+                    st.session_state.pop("final_resp", None)
+                    st.session_state.pop("student_json", None)
+                else:
+                    st.error(f"❌ Insert failed: {response}")
+            except Exception as e:
+                st.error(f"❌ Supabase error: {e}")
