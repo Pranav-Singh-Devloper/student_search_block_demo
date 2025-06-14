@@ -5,6 +5,14 @@ import os
 from dotenv import load_dotenv
 from BM_25 import load_students, load_jsonl_file, preprocess_jobs, build_bm25_model, match_students_to_jobs
 from chatbot_together import analyze_matches
+from supabase import create_client, Client
+from datetime import datetime
+
+# --- Supabase setup ---
+TOGETHER_API_KEY = st.secrets["TOGETHER_API_KEY"]
+SUPABASE_URL = st.secrets["SUPABASE_URL"]
+SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # ────────────── Setup ────────────── #
 load_dotenv()
@@ -16,38 +24,40 @@ st.set_page_config(page_title="Profeshare Job Matcher", layout="wide")
 st.title("🔍 Profeshare Job Matcher")
 
 # --- Inputs ---
-uploaded_file = st.file_uploader("📁 Upload student profile JSON file", type=["json"])
-interest_input = st.text_input(
-    "💡 Enter interests (separated by '+')", 
-    placeholder="e.g. frontend+developer+>10LPA+hybrid"
+st.markdown("### 🧑‍🎓 Student Profile Input")
+
+json_input = st.text_area(
+    "📄 Paste student profile JSON here:",
+    placeholder='[{"first_name": "John", "last_name": "Doe", "skills": ["python", "react"], "job_preferences": {"job_roles": ["backend"]}}]',
+    height=250
 )
 
-if uploaded_file and interest_input:
-    # ───── Parse & Validate Uploaded JSON ───── #
-    raw = uploaded_file.read()
-    if not raw:
-        st.error("❌ Uploaded file was empty.")
-        st.stop()
+interest_input = st.text_input(
+    "💡 Enter interests (separated by '+')", 
+    placeholder="e.g. frontend+developer+remote"
+)
 
+if json_input and interest_input:
     try:
-        student_data = json.loads(raw)
+        student_data = json.loads(json_input)
     except json.JSONDecodeError as e:
-        st.error(f"❌ Could not parse uploaded JSON: {e}")
+        st.error(f"❌ Invalid JSON: {e}")
         st.stop()
 
     if not isinstance(student_data, list):
         student_data = [student_data]
 
-    # ───── Update Interests in the Payload ───── #
+    # Update job_preferences.interests
     interest_list = [tok.strip() for tok in interest_input.split("+") if tok.strip()]
     for student in student_data:
         student.setdefault("job_preferences", {})["interests"] = interest_list
 
-    # ───── Save Temp Student File ───── #
+    # Save to file for further processing
     students_path = os.path.join(BASE_DIR, "students.json")
     with open(students_path, "w") as f:
         json.dump(student_data, f, indent=2)
-    st.success("✅ Interests updated and student profile processed!")
+
+    st.success("✅ Student data loaded and interests set!")
 
     # ───── Load & Preprocess Job Data ───── #
     part_files = ["part_1.jsonl", "part_2.jsonl", "part_3.jsonl"]
@@ -89,3 +99,17 @@ if uploaded_file and interest_input:
         st.write(final_resp)
     except Exception as e:
         st.error(f"❌ LLM reasoning failed: {e}")
+    # --- Prepare data ---
+    data = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "student_profile": json_input,
+        "bm25_matches": matches,
+        "llm_analysis": final_resp
+    }
+# --- Insert into Supabase ---
+    response = supabase.table("job_matches").insert(data).execute()
+
+    if response.data:
+        st.success("✅ Data inserted successfully!")
+    else:
+        st.error(f"❌ Insert failed: {response}")
