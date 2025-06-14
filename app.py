@@ -108,10 +108,10 @@ if json_input and interest_input and "matches" not in st.session_state:
 if "matches" in st.session_state and "final_resp" in st.session_state:
     st.markdown("### ✅ Data is ready to be uploaded")
     # st.write(st.session_state["matches"])  # Optional preview
-    st.write(st.session_state["final_resp"])
 
     if st.button("📤 Push to Supabase"):
         with st.spinner("🚀 Uploading data to Supabase..."):
+            st.write(st.session_state["final_resp"])
             try:
                 data = {
                     "timestamp": datetime.utcnow().isoformat(),

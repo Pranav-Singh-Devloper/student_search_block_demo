@@ -56,6 +56,7 @@ Below is a JSON array of job postings (companies). When I give you a student pro
    - Start date, job title, location preferences
    - Domain fit (e.g., software, AI, management, etc.)
    - Any additional qualification criteria
+   - Explain your Analysis in detail 
 
 🎯 2. Assign a “Match Score” (0–100%) to each job based on how well the student's profile aligns.
 
@@ -65,7 +66,7 @@ Below is a JSON array of job postings (companies). When I give you a student pro
 
 🧾 **Job X (Start Date: YYYY-MM-DD)** – “{{Job Title}} at {{Company Name}}”
 - 🔢 Match Score: XX%
-- ✅ Why it's a good fit:
+- ✅ Why it's a good fit (EXPLAIN IN DETAIL):
   • ...
   • ...
 - ⚠️ Potential difficulties / mismatches:
