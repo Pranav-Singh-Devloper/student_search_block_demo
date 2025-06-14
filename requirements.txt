@@ -12,4 +12,4 @@ uvicorn
 sse_starlette
 huggingface_hub
 openai
-supabase-py
+supabase
