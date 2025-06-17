@@ -3,7 +3,13 @@ import json
 import pickle
 import os
 from dotenv import load_dotenv
-from BM_25 import load_students, load_jsonl_file, preprocess_jobs, build_bm25_model, match_students_to_jobs
+from BM_25 import (
+    load_students,
+    load_jsonl_file,
+    preprocess_jobs,
+    build_bm25_model,
+    match_students_to_jobs,
+)
 from chatbot_together import analyze_matches
 from supabase import create_client, Client
 from datetime import datetime
@@ -23,6 +29,15 @@ BASE_DIR = os.path.dirname(__file__)
 st.set_page_config(page_title="Profeshare Job Matcher", layout="wide")
 st.title("🔍 Profeshare Job Matcher")
 
+# --- Intern Name Dropdown (store immediately) ---
+intern_names = [
+    "Pranav Singh", "Devi Lakkoji", "Hemant", "Harsh", "Preethi",
+    "Rohithauppala", "Samarpan Karra", "Sandhya Medapati",
+    "Sibtain", "SMA", "Yashpal", "Yeluri Nakshatra"
+]
+selected_intern = st.selectbox("🧑‍💼 Select Your Name :", intern_names)
+st.session_state["intern_name"] = selected_intern  # ← store early
+
 # --- Inputs ---
 st.markdown("### 🧑‍🎓 Student Profile Input")
 
@@ -33,12 +48,13 @@ json_input = st.text_area(
 )
 
 interest_input = st.text_input(
-    "💡 Enter interests (separated by '+')", 
+    "💡 Enter interests (separated by '+')",
     placeholder="e.g. frontend+developer+remote"
 )
 
-# Process input only once
+# ────────────── Process Input & Generate Matches ────────────── #
 if json_input and interest_input and "matches" not in st.session_state:
+    # Parse JSON
     try:
         student_data = json.loads(json_input)
     except json.JSONDecodeError as e:
@@ -48,19 +64,19 @@ if json_input and interest_input and "matches" not in st.session_state:
     if not isinstance(student_data, list):
         student_data = [student_data]
 
-    # Update job_preferences.interests
+    # Update interests
     interest_list = [tok.strip() for tok in interest_input.split("+") if tok.strip()]
     for student in student_data:
         student.setdefault("job_preferences", {})["interests"] = interest_list
 
-    # Save to file for further processing
+    # Save to local file
     students_path = os.path.join(BASE_DIR, "students.json")
     with open(students_path, "w") as f:
         json.dump(student_data, f, indent=2)
 
     st.success("✅ Student data loaded and interests set!")
 
-    # ───── Load & Preprocess Job Data ───── #
+    # Load & index job data
     part_files = ["part_1.jsonl", "part_2.jsonl", "part_3.jsonl"]
     jobs = []
     with st.spinner("🚀 Loading and Indexing Jobs..."):
@@ -69,8 +85,9 @@ if json_input and interest_input and "matches" not in st.session_state:
             if not os.path.exists(path):
                 st.error(f"❌ Missing file in repo: {fname}")
                 st.stop()
+            with open(path, "r") as f:
+                raw_lines = f.read().splitlines()
             try:
-                raw_lines = open(path, "r").read().splitlines()
                 records = [json.loads(line) for line in raw_lines if line.strip()]
             except Exception as e:
                 st.error(f"❌ Error loading {fname}: {e}")
@@ -79,9 +96,10 @@ if json_input and interest_input and "matches" not in st.session_state:
 
         job_texts, job_index = preprocess_jobs(jobs)
         bm25 = build_bm25_model(job_texts)
-    st.success(f"✅ Loaded and indexed jobs")
 
-    # ───── Match Students to Jobs ───── #
+    st.success("✅ Loaded and indexed jobs")
+
+    # Match students to jobs
     matches = match_students_to_jobs(
         student_data, jobs, bm25, job_index, top_n=10
     )
@@ -89,7 +107,7 @@ if json_input and interest_input and "matches" not in st.session_state:
     with open(pickle_path, "wb") as f:
         pickle.dump(matches, f)
 
-    # ───── LLM Reasoning on Matches ───── #
+    # LLM reasoning on matches
     try:
         with st.spinner("🧠 LLM is analyzing job matches..."):
             final_resp = analyze_matches(pickle_path, student_data)
@@ -99,32 +117,32 @@ if json_input and interest_input and "matches" not in st.session_state:
         st.error(f"❌ LLM reasoning failed: {e}")
         final_resp = {}
 
-    # Save results to session_state
+    # ─── Save to session_state ─── #
     st.session_state["student_json"] = json_input
     st.session_state["matches"] = matches
     st.session_state["final_resp"] = final_resp
 
-# --- Show results and push button if available ---
+# ────────────── Show & Push to Supabase ────────────── #
 if "matches" in st.session_state and "final_resp" in st.session_state:
     st.markdown("### ✅ Data is ready to be uploaded")
-    # st.write(st.session_state["matches"])  # Optional preview
+    st.write(st.session_state["final_resp"])
 
     if st.button("📤 Push to Supabase"):
         with st.spinner("🚀 Uploading data to Supabase..."):
-            st.write(st.session_state["final_resp"])
             try:
                 data = {
                     "timestamp": datetime.utcnow().isoformat(),
+                    "intern_name": st.session_state["intern_name"],
                     "student_profile": st.session_state["student_json"],
                     "bm25_matches": st.session_state["matches"],
-                    "llm_analysis": st.session_state["final_resp"]
+                    "llm_analysis": st.session_state["final_resp"],
                 }
                 response = supabase.table("job_matches").insert(data).execute()
                 if response.data:
                     st.success("✅ Data inserted successfully into Supabase!")
-                    st.session_state.pop("matches", None)
-                    st.session_state.pop("final_resp", None)
-                    st.session_state.pop("student_json", None)
+                    # Clear state for next run
+                    for key in ["matches", "final_resp", "student_json", "intern_name"]:
+                        st.session_state.pop(key, None)
                 else:
                     st.error(f"❌ Insert failed: {response}")
             except Exception as e:
